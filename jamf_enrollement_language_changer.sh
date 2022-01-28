@@ -50,13 +50,13 @@ read -r -d '' jsonData <<EOF
 	"loginButton" : "Connexion",
 	"deviceClassDescription" : "Spécifiez le type d'appareil à enrôler, appareil professionnel ou personnel",
 	"deviceClassPersonal" : "Appareil Personnel",
-	"deviceClassPersonalDescription" : "Sur les appareils personnels, nos administrateurs **peuvent**:\n\n*   Lock the device\n*   Apply institutional settings\n*   Install and remove institutional data\n*   Install and remove institutional apps\n\n\nSur les appareils personnels, nos administrateurs **ne peuvent pas**:\n\n*   Wipe all data and settings from your device\n*   Track the location of your device\n*   Remove anything they did not install\n*   Add/remove configuration profiles\n*   Add/remove provisioning profiles",
+	"deviceClassPersonalDescription" : "Sur les appareils personnels, nos administrateurs **peuvent**:\n\n*   Verrouiller l'appareil\n*   Appliquer des réglages professionnels sur l'appareil\n*   Installer et supprimer des données de l'entreprise\n*   Installer et supprimer des apps\n\n\nSur les appareils personnels, nos administrateurs **ne peuvent pas**:\n\n*   Effacer toutes les données et réglages de l'appareil\n*   Géolocaliser votre appareil\n*   Supprimer quoi que ce soit qu'ils n'auraient pas installé\n*   Ajouer/Supprimer des profils de configuration\n*   Ajouter/Supprimer des profils d'approvisionnements",
 	"deviceClassEnterprise" : "Appareil Professionnel",
-	"deviceClassEnterpriseDescription" : "Sur les appareils professionnels, nos administrateurs **peuvent**:\n\n*   Wipe all data and settings from the device\n*   Lock the device\n*   Remove the passcode\n*   Apply institutional settings\n*   Install and remove institutional data\n*   Install and remove institutional apps\n*   Add/remove configuration profiles\n*   Add/remove provisioning profiles\n\nSur les appareils professionnels, nos administrateurs **ne peuvent pas**:\n\n*   Remove anything they did not install\n*   Track the location of the device",
+	"deviceClassEnterpriseDescription" : "Sur les appareils professionnels, nos administrateurs **peuvent**:\n\n*   Effacer toutes les données et réglages de l'appareil\n*   Verrouiller l'appareil\n*   Supprimer le mot de passe\n*   Appliquer des réglages de l'entreprise\n*   Installer et supprimer des données de l'entreprise\n*   Installer et supprimer des apps de l'entreprise\n*   Ajouer/Supprimer des profils de configuration\n*   Ajouter/Supprimer des profils d'approvisionnements\n\nSur les appareils professionnels, nos administrateurs **ne peuvent pas**:\n\n*   Supprimer quoi que ce soit qu'ils n'auraient pas installé\n*   Géolocaliser votre appareil",
 	"deviceClassButton" : "Enrôler",
 	"personalEula" : "",
 	"enterpriseEula" : "",
-	"eulaButton" : "Accept",
+	"eulaButton" : "Accepter",
 	"siteDescription" : "Sélectionnez un site d'appartenance pour cet appareil.",
 	"certificateText" : "Pour continuer cet enrôlement, vous devez installer un certificat provenant de votre organisation.",
 	"certificateButton" : "Continuer",
@@ -82,8 +82,8 @@ read -r -d '' jsonData <<EOF
 	"completeMessage" : "![icon](https://upload.wikimedia.org/wikipedia/commons/thumb/6/6b/Check_green_circle.svg/128px-Check_green_circle.svg.png)\n\nProcessus d'enrôlement terminé.",
 	"failedMessage" : "![icon](https://upload.wikimedia.org/wikipedia/commons/thumb/d/d6/Dialog-warning-custom.svg/128px-Dialog-warning-custom.svg.png)\n\nImpossible de terminer l'enrôlement, veuillez contacter votre administrateur informatique.",
 	"tryAgainButton" : "Réessayer",
-	"checkNowButton" : "Status",
-	"checkEnrollmentMessage" : "Cliquez sur \"Status\" pour voir le status d'enrôlement de votre appareil",
+	"checkNowButton" : "Statut",
+	"checkEnrollmentMessage" : "Cliquez sur \"Statut\" pour voir le statut d'enrôlement de votre appareil",
 	"logoutButton" : "Se Déconnecter"
 }
 
