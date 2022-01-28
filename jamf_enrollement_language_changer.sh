@@ -5,7 +5,7 @@
 #        supported language for user enrollement.
 #        Tested with Jamf Pro 10.35
 # AUTHOR - Guillaume Gete (with help of Vincent Bonnin)
-# VERSION - 1.0
+# VERSION - 1.0.1
 #####################################################################################################
 
 # API Credentials
