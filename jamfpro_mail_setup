@@ -1,0 +1,41 @@
+#!/bin/bash
+
+#####################################################################################################
+# INFO - This script will set up mail server with custom details for our own server using Jamf API.
+# AUTHOR - Guillaume Gète
+# VERSION - 1.0.0
+# 11/02/2022
+#####################################################################################################
+
+# API Credentials
+instanceURL="https://jamf.exemple.com"
+apiUser="username"
+apiPass="password"
+
+smtpserver="smtp.exemple.com"
+smtpusername="smtp@exemple.com"
+smtppassword="agreatpasswordhere"
+sendfromname="Your JSS Instance Name"
+sendfrommail="user@exemple.com"
+
+# You may want to fix other settings below
+
+curl --request PUT \
+-sku "$apiUser":"$apiPass" \
+--header 'Content-Type: application/xml' \
+--url $instanceURL/JSSResource/smtpserver \
+--data "	<smtp_server>
+		<enabled>true</enabled>
+		<host>$smtpserver</host>
+		<port>587</port>
+		<timeout>5</timeout>
+		<authorization_required>true</authorization_required>
+		<username>$smtpusername</username>
+		<password>$smtppassword</password>
+		<ssl>false</ssl>
+		<tls>true</tls>
+		<encryption>2</encryption>
+		<send_from_name>$sendfromname</send_from_name>
+		<send_from_email>$sendfrommail</send_from_email>
+	</smtp_server>"
+exit 0
