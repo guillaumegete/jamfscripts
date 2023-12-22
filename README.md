@@ -19,3 +19,9 @@ Sets up the mail server used to send notifications from Jamf Pro. Useful if you 
 https://github.com/guillaumegete/jamfscripts/blob/main/jamfpro_mail_setup
 
 Uses Jamf Classic API.
+
+## Change Jamf Site
+
+Basic script allowing to change the site of a computer in Jamf Pro according to some LDAP value.
+
+https://github.com/guillaumegete/jamfscripts/blob/main/ChangeJamfSite.sh
