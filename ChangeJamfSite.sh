@@ -11,11 +11,14 @@
 # that we get from a Jamf variable ("position"), that we push through a profile in the 
 # /Library/Managed Preferences/com.MyCompany.variables.plist file.
 
-# 1.0.1 
+# 1.0.2
+# Added variable for the plist file
+# 1.0.1
 # Updated with Bearer Token Authorization
 # Modified to change the computer to be attributed to MyCompany France if not MyCompany International
 
 jamfProURL="https://MyCompany.jamfcloud.com"
+plistFile="com.MyCompany.variables.plist"
 username="$4"
 password="$5"
 
@@ -43,7 +46,7 @@ echo Token: "$token"
 echo Expiration: "$tokenExpiration"
 echo Expiration epoch: "$localTokenExpirationEpoch"
 
-VARIABLE_FILE="/Library/Managed Preferences/com.MyCompany.variables.plist"
+VARIABLE_FILE="/Library/Managed Preferences/$plistFile"
 
 USER_POSITION=$(/usr/bin/defaults read "$VARIABLE_FILE" position | grep -i international)
 
