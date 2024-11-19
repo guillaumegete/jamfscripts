@@ -1,0 +1,21 @@
+#!/bin/bash
+
+# $4 = Nom CUPS de l'imprimante (pas de caractère spécial !)
+# $5 = Nom de l'imprimante
+# $6 = Emplacement physique
+# $7 = IP de l'imprimante
+# $8 = Nom du PPD (DOIT être dans /Library/Printers/PPDs/Contents/Resources/)
+
+consoleuser=$(stat -f%Su /dev/console)
+
+# mkdir /usr/local/foncia/ppd
+
+# Génération du fichier PPD
+
+# /System/Library/Printers/Libraries/ipp2ppd ipp://"$6"/ipp/print /System/Library/Frameworks/ApplicationServices.framework/Versions/A/Frameworks/PrintCore.framework/Versions/A/Resources/AirPrint.ppd > /Users/Shared/"$CUPSNAME".ppd
+
+# Création de la file d'attente
+
+sudo -u "$consoleuser" lpadmin -p "$4" -D "$5" -L "$6" -E -o printer-is-shared=false -o ColorModel=Gray -o Collate=true -v ipp://"$7"/ipp/print -P /Library/Printers/PPDs/Contents/Resources/"$8"
+
+exit 0
