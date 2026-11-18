@@ -1,0 +1,50 @@
+#!/bin/bash
+#
+# extract_scripts.sh
+# Extrait le contenu de <script_contents> de fichiers XML (exports Jamf)
+# et l'enregistre dans des fichiers .sh.
+#
+# Usage : ./extract_scripts.sh [dossier_source] [dossier_destination]
+#   dossier_source      : dossier contenant les .xml (défaut : dossier courant)
+#   dossier_destination : dossier où écrire les .sh (défaut : <source>/scripts)
+
+sourceDir="${1:-.}"
+destDir="${2:-$sourceDir/scripts}"
+
+mkdir -p "$destDir" || { echo "Impossible de créer $destDir" >&2; exit 1; }
+
+okCount=0
+fallbackCount=0
+emptyCount=0
+
+for xmlFile in "$sourceDir"/*.xml; do
+    [ -e "$xmlFile" ] || { echo "Aucun fichier .xml dans $sourceDir" >&2; exit 1; }
+
+    outputFile="$destDir/$(basename "${xmlFile%.xml}").sh"
+
+    if xmllint --noout "$xmlFile" 2>/dev/null; then
+        # XML valide : xmllint décode les entités (&lt; &amp; ...) et les CDATA
+        xmllint --xpath 'string(//script_contents)' "$xmlFile" > "$outputFile"
+        extractMethod="xmllint"
+    else
+        # XML invalide (caractères < ou & non échappés) : extraction brute du texte
+        perl -0777 -ne 'print $1 if /<script_contents>(.*?)<\/script_contents>/s' "$xmlFile" > "$outputFile"
+        extractMethod="extraction brute (XML invalide)"
+        fallbackCount=$((fallbackCount + 1))
+    fi
+
+    if [ -s "$outputFile" ]; then
+        # Ajoute un saut de ligne final s'il manque
+        [ "$(tail -c1 "$outputFile")" != "" ] && echo >> "$outputFile"
+        chmod +x "$outputFile"
+        echo "OK     $(basename "$outputFile")  [$extractMethod]"
+        okCount=$((okCount + 1))
+    else
+        rm -f "$outputFile"
+        echo "VIDE   $(basename "$xmlFile")  (pas de <script_contents>)" >&2
+        emptyCount=$((emptyCount + 1))
+    fi
+done
+
+echo
+echo "$okCount script(s) extrait(s) dans $destDir ($fallbackCount via extraction brute, $emptyCount sans contenu)."
