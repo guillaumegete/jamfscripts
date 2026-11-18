@@ -1,0 +1,292 @@
+#!/bin/bash
+#
+# audit_jamf_auth.sh
+# -----------------------------------------------------------------------------
+# Audit en LECTURE SEULE d'un dossier de scripts Jamf Pro.
+#
+# Repère les scripts qui s'authentifient encore auprès de Jamf Pro avec un
+# identifiant / mot de passe (Basic Auth, ou token Bearer obtenu via
+# /api/v1/auth/token) au lieu d'un client d'API (OAuth "client credentials"
+# via /api/oauth/token avec client_id / client_secret).
+#
+# Aucun script analysé n'est modifié : le script ne fait que les lire et
+# produit un rapport texte + un fichier CSV (séparateur « ; », ouvrable dans Excel/Numbers).
+#
+# Usage :
+#   ./audit_jamf_auth.sh [options] <dossier_des_scripts>
+#
+# Options :
+#   -o <dossier>   Dossier où écrire le rapport (défaut : ~/Desktop, sinon dossier courant)
+#   -c             Analyser aussi les lignes commentées (ignorées par défaut)
+#   -n             Ne pas afficher d'extraits de code dans le rapport (numéros de ligne seulement)
+#   -h             Afficher l'aide
+#
+# Compatible avec le bash 3.2 fourni par macOS.
+# -----------------------------------------------------------------------------
+
+set -u
+export LC_ALL=C   # évite les erreurs « illegal byte sequence » de grep/sed sur macOS
+
+VERSION="1.0"
+Q="'"   # apostrophe, pour construire les expressions régulières
+
+usage() {
+    sed -n '2,25p' "$0" | sed 's/^# \{0,1\}//'
+    exit "${1:-0}"
+}
+
+# --- Options -----------------------------------------------------------------
+OUTPUT_BASE=""
+INCLUDE_COMMENTS=0
+SHOW_EXCERPTS=1
+
+while getopts ":o:cnh" opt; do
+    case "$opt" in
+        o) OUTPUT_BASE="$OPTARG" ;;
+        c) INCLUDE_COMMENTS=1 ;;
+        n) SHOW_EXCERPTS=0 ;;
+        h) usage 0 ;;
+        :) echo "Erreur : l'option -$OPTARG attend une valeur." >&2; usage 1 ;;
+        \?) echo "Erreur : option inconnue -$OPTARG" >&2; usage 1 ;;
+    esac
+done
+shift $((OPTIND - 1))
+
+SOURCE_DIR="${1:-}"
+if [ -z "$SOURCE_DIR" ]; then
+    echo "Erreur : indiquez le dossier contenant les scripts Jamf Pro." >&2
+    usage 1
+fi
+if [ ! -d "$SOURCE_DIR" ]; then
+    echo "Erreur : « $SOURCE_DIR » n'est pas un dossier." >&2
+    exit 1
+fi
+SOURCE_DIR="$(cd "$SOURCE_DIR" && pwd)"
+
+if [ -z "$OUTPUT_BASE" ]; then
+    if [ -d "$HOME/Desktop" ]; then OUTPUT_BASE="$HOME/Desktop"; else OUTPUT_BASE="$(pwd)"; fi
+fi
+STAMP="$(date +%Y%m%d_%H%M%S)"
+OUTPUT_DIR="$OUTPUT_BASE/Audit_Auth_Jamf_$STAMP"
+mkdir -p "$OUTPUT_DIR" || { echo "Erreur : impossible de créer $OUTPUT_DIR" >&2; exit 1; }
+REPORT_TXT="$OUTPUT_DIR/rapport_audit_auth_jamf.txt"
+REPORT_CSV="$OUTPUT_DIR/rapport_audit_auth_jamf.csv"
+TMP_DIR="$(mktemp -d "${TMPDIR:-/tmp}/audit_jamf.XXXXXX")"
+trap 'rm -rf "$TMP_DIR"' EXIT
+
+# --- Règles de détection -----------------------------------------------------
+# Chaque règle = un libellé + une expression régulière étendue (insensible à la casse).
+
+# 1) Indices FORTS d'authentification par identifiant / mot de passe
+B_LABELS=(); B_REGEX=()
+addB() { B_LABELS+=("$1"); B_REGEX+=("$2"); }
+addB "curl -u/--user (Basic Auth)" \
+     "curl.*[[:space:]](-[A-Za-z]*u|--user)([[:space:]]|=)"
+addB "-u/--user identifiant:mot_de_passe" \
+     "(^|[[:space:]])(-[A-Za-z]*u|--user)([[:space:]]+|=)[\"$Q]?[^[:space:]\"$Q]*:"
+addB "-u/--user avec variable d'identifiants" \
+     "(^|[[:space:]])(-[A-Za-z]*u|--user)([[:space:]]+|=)[\"$Q]?\\$\\{?[A-Za-z0-9_]*(cred|pass|auth|jss|jamf|api|basic)"
+addB "En-tête Authorization: Basic" \
+     "Authorization.{0,8}Basic"
+addB "Token via identifiant/mot de passe (/api/v1/auth/token)" \
+     "(api/v1/auth/token|uapi/auth/tokens)"
+addB "Encodage base64 d'identifiants" \
+     "(user|pass|cred|login).*base64|base64.*(user|pass|cred|login)"
+addB "Basic Auth (Python/variables)" \
+     "HTTPBasicAuth|[^A-Za-z_]auth[[:space:]]*=[[:space:]]*\\(|basic_?auth|encoded_?cred"
+
+# 2) Indices FAIBLES (noms de variables suggérant un compte utilisateur API)
+W_LABELS=(); W_REGEX=()
+addW() { W_LABELS+=("$1"); W_REGEX+=("$2"); }
+addW "Variable identifiant/mot de passe API" \
+     "(api|jamf|jss|jpro|admin)_?(user(name)?|pass(word)?|pwd|pw)[[:space:]]*="
+
+# 3) Indices d'authentification par CLIENT D'API (méthode recommandée)
+A_LABELS=(); A_REGEX=()
+addA() { A_LABELS+=("$1"); A_REGEX+=("$2"); }
+addA "Endpoint OAuth (/api/oauth/token)" "api/oauth/token"
+addA "client_id / client_secret"          "client_?(id|secret)"
+addA "grant_type=client_credentials"      "client_credentials"
+
+# 4) Secrets probablement écrits en dur (alerte de sécurité, quel que soit le mode)
+H_LABELS=(); H_REGEX=()
+addH() { H_LABELS+=("$1"); H_REGEX+=("$2"); }
+addH "Identifiant:mot de passe en dur après -u" \
+     "(^|[[:space:]])(-[A-Za-z]*u|--user)([[:space:]]+|=)[\"$Q]?[^\$[:space:]\"$Q]+:[^\$[:space:]\"$Q]+"
+addH "Mot de passe/secret affecté en dur" \
+     "(pass(word)?|passwd|pwd|secret)[A-Za-z0-9_]*[[:space:]]*=[[:space:]]*[\"$Q][^\$\"$Q]+[\"$Q]"
+
+# 5) Informations complémentaires
+API_USAGE_REGEX="JSSResource|/api/v[0-9]|/uapi/|/api/oauth|jamfcloud\\.com|:8443"
+CLASSIC_REGEX="JSSResource"
+
+# --- Fonctions utilitaires ---------------------------------------------------
+
+# Renvoie "num_ligne<TAB>libellé" pour chaque ligne du fichier correspondant à la règle.
+match_rule() { # $1=fichier $2=regex $3=libellé
+    grep -n -E -i -- "$2" "$1" 2>/dev/null \
+        | { if [ "$INCLUDE_COMMENTS" -eq 1 ]; then cat; else grep -v -E '^[0-9]+:[[:space:]]*#'; fi; } \
+        | cut -d: -f1 \
+        | while read -r n; do printf '%s\t%s\n' "$n" "$3"; done
+}
+
+# Fusionne les libellés par ligne et trie par numéro de ligne.
+merge_hits() {
+    awk -F'\t' '{ if ($1 in a) { if (index(a[$1], $2) == 0) a[$1] = a[$1] ", " $2 } else a[$1] = $2 }
+                END { for (k in a) print k "\t" a[k] }' | sort -n
+}
+
+count_lines() { [ -s "$1" ] && wc -l < "$1" | tr -d ' ' || echo 0; }
+
+line_list() { [ -s "$1" ] && cut -f1 "$1" | paste -sd ',' - || echo ""; }
+
+# Masque les mots de passe / secrets éventuels dans les extraits.
+mask_secrets() {
+    sed -E \
+        -e "s/((-[A-Za-z]*u|--user)([[:space:]]+|=)[\"$Q]?[^:\"$Q[:space:]]*:)[^\$\"$Q[:space:]][^\"$Q[:space:]]*/\\1****/g" \
+        -e "s/(([Pp][Aa][Ss][Ss]([Ww][Oo][Rr][Dd])?|[Pp][Ww][Dd]|[Ss][Ee][Cc][Rr][Ee][Tt])[A-Za-z0-9_]*[[:space:]]*=[[:space:]]*[\"$Q]?)[^\$\"$Q[:space:]][^\"$Q[:space:]]*/\\1****/g" \
+        -e "s/([Bb]asic[[:space:]]+)[A-Za-z0-9+\\/=]{8,}/\\1****/g"
+}
+
+print_hits() { # $1=fichier source $2=fichier des correspondances
+    while IFS="$(printf '\t')" read -r n label; do
+        if [ "$SHOW_EXCERPTS" -eq 1 ]; then
+            excerpt="$(sed -n "${n}p" "$1" | sed -E 's/^[[:space:]]+//' | mask_secrets | cut -c1-140)"
+            printf '      L%-5s [%s]\n             %s\n' "$n" "$label" "$excerpt"
+        else
+            printf '      L%-5s [%s]\n' "$n" "$label"
+        fi
+    done < "$2"
+}
+
+csv_field() { printf '"%s"' "$(printf '%s' "$1" | sed 's/"/""/g')"; }
+
+# Un fichier est retenu s'il a une extension de script connue ou commence par un shebang.
+is_script() {
+    case "$1" in
+        *.sh|*.bash|*.zsh|*.ksh|*.command|*.tool|*.py|*.pl|*.rb|*.swift|*.applescript|*.scpt.txt) return 0 ;;
+    esac
+    [ "$(head -c 2 "$1" 2>/dev/null)" = "#!" ]
+}
+
+# --- Analyse -----------------------------------------------------------------
+echo "Analyse de : $SOURCE_DIR"
+
+printf '\xEF\xBB\xBF' > "$REPORT_CSV"   # BOM UTF-8 pour Excel
+echo "Fichier;Statut;Indices identifiant/mot de passe;Indices client d'API;Indices faibles;Secrets en dur;Classic API (JSSResource);Lignes identifiant/mot de passe;Lignes client d'API;Lignes secrets en dur" >> "$REPORT_CSV"
+
+: > "$TMP_DIR/details"
+n_total=0; n_basic=0; n_mixed=0; n_api=0; n_check=0; n_none=0; n_hard=0
+
+find "$SOURCE_DIR" -type f ! -path '*/.git/*' ! -name '.*' -print0 | sort -z > "$TMP_DIR/files"
+
+while IFS= read -r -d '' f; do
+    is_script "$f" || continue
+    n_total=$((n_total + 1))
+    rel="${f#$SOURCE_DIR/}"
+
+    : > "$TMP_DIR/b_raw"; : > "$TMP_DIR/w_raw"; : > "$TMP_DIR/a_raw"; : > "$TMP_DIR/h_raw"
+    i=0; while [ $i -lt ${#B_REGEX[@]} ]; do match_rule "$f" "${B_REGEX[$i]}" "${B_LABELS[$i]}" >> "$TMP_DIR/b_raw"; i=$((i+1)); done
+    i=0; while [ $i -lt ${#W_REGEX[@]} ]; do match_rule "$f" "${W_REGEX[$i]}" "${W_LABELS[$i]}" >> "$TMP_DIR/w_raw"; i=$((i+1)); done
+    i=0; while [ $i -lt ${#A_REGEX[@]} ]; do match_rule "$f" "${A_REGEX[$i]}" "${A_LABELS[$i]}" >> "$TMP_DIR/a_raw"; i=$((i+1)); done
+    i=0; while [ $i -lt ${#H_REGEX[@]} ]; do match_rule "$f" "${H_REGEX[$i]}" "${H_LABELS[$i]}" >> "$TMP_DIR/h_raw"; i=$((i+1)); done
+
+    merge_hits < "$TMP_DIR/b_raw" > "$TMP_DIR/b"
+    merge_hits < "$TMP_DIR/w_raw" > "$TMP_DIR/w"
+    merge_hits < "$TMP_DIR/a_raw" > "$TMP_DIR/a"
+    merge_hits < "$TMP_DIR/h_raw" > "$TMP_DIR/h"
+
+    cb=$(count_lines "$TMP_DIR/b"); cw=$(count_lines "$TMP_DIR/w")
+    ca=$(count_lines "$TMP_DIR/a"); ch=$(count_lines "$TMP_DIR/h")
+    uses_api=0; grep -q -E -i -- "$API_USAGE_REGEX" "$f" 2>/dev/null && uses_api=1
+    classic="Non"; grep -q -E -- "$CLASSIC_REGEX" "$f" 2>/dev/null && classic="Oui"
+
+    if   [ "$cb" -gt 0 ] && [ "$ca" -gt 0 ]; then status="MIXTE";                       code=2; n_mixed=$((n_mixed+1))
+    elif [ "$cb" -gt 0 ];                     then status="IDENTIFIANT/MOT DE PASSE";    code=1; n_basic=$((n_basic+1))
+    elif [ "$ca" -gt 0 ];                     then status="CLIENT D'API";                code=4; n_api=$((n_api+1))
+    elif [ "$cw" -gt 0 ] || [ "$uses_api" -eq 1 ]; then status="A VERIFIER";             code=3; n_check=$((n_check+1))
+    else                                           status="AUCUN APPEL API DETECTE";     code=5; n_none=$((n_none+1))
+    fi
+    [ "$ch" -gt 0 ] && n_hard=$((n_hard+1))
+
+    # Ligne CSV
+    {
+        csv_field "$rel"; printf ';'; csv_field "$status"; printf ';%s;%s;%s;%s;' "$cb" "$ca" "$cw" "$ch"
+        csv_field "$classic"; printf ';'
+        csv_field "$(line_list "$TMP_DIR/b")"; printf ';'
+        csv_field "$(line_list "$TMP_DIR/a")"; printf ';'
+        csv_field "$(line_list "$TMP_DIR/h")"; printf '\n'
+    } >> "$REPORT_CSV"
+
+    # Bloc de détail pour le rapport texte (préfixé du code pour le tri par statut)
+    if [ "$code" -le 4 ]; then
+        {
+            echo ""
+            echo "  ▸ $rel"
+            echo "    Statut : $status   |   Classic API : $classic"
+            if [ "$cb" -gt 0 ]; then echo "    Authentification identifiant/mot de passe :"; print_hits "$f" "$TMP_DIR/b"; fi
+            if [ "$ca" -gt 0 ]; then echo "    Authentification client d'API :";              print_hits "$f" "$TMP_DIR/a"; fi
+            if [ "$cw" -gt 0 ] && [ "$cb" -eq 0 ]; then echo "    Indices à vérifier :";         print_hits "$f" "$TMP_DIR/w"; fi
+            if [ "$code" -eq 3 ] && [ "$cw" -eq 0 ]; then
+                echo "    Appel à l'API Jamf détecté sans méthode d'authentification identifiable"
+                echo "    (token peut-être transmis en paramètre ou via un fichier externe)."
+            fi
+            if [ "$ch" -gt 0 ]; then echo "    ⚠ Secrets probablement écrits en dur :";         print_hits "$f" "$TMP_DIR/h"; fi
+        } | sed "s/^/$code	/" >> "$TMP_DIR/details"
+    fi
+    if [ "$code" -eq 5 ]; then printf '5\t      - %s\n' "$rel" >> "$TMP_DIR/details"; fi
+done < "$TMP_DIR/files"
+
+# --- Rapport texte -----------------------------------------------------------
+section() { # $1=code $2=titre $3=nombre
+    echo ""
+    echo "-------------------------------------------------------------------------------"
+    echo " $2 ($3)"
+    echo "-------------------------------------------------------------------------------"
+    if [ "$3" -eq 0 ]; then echo "  (aucun)"; return; fi
+    awk -F'\t' -v c="$1" '$1 == c { sub(/^[^\t]*\t/, ""); print }' "$TMP_DIR/details"
+}
+
+{
+    echo "==============================================================================="
+    echo " AUDIT DES MÉTHODES D'AUTHENTIFICATION – SCRIPTS JAMF PRO"
+    echo "==============================================================================="
+    echo " Date            : $(date '+%d/%m/%Y %H:%M:%S')"
+    echo " Dossier analysé : $SOURCE_DIR"
+    echo " Lignes commentées analysées : $([ "$INCLUDE_COMMENTS" -eq 1 ] && echo oui || echo non)"
+    echo " Mode            : lecture seule (aucun script modifié) – audit_jamf_auth.sh v$VERSION"
+    echo ""
+    echo " SYNTHÈSE"
+    echo "   Scripts analysés                                   : $n_total"
+    echo "   ✗ Identifiant / mot de passe uniquement (à migrer) : $n_basic"
+    echo "   ◐ Mixte (les deux méthodes présentes)              : $n_mixed"
+    echo "   ? À vérifier manuellement                          : $n_check"
+    echo "   ✓ Client d'API (OAuth client credentials)          : $n_api"
+    echo "   – Aucun appel à l'API Jamf détecté                 : $n_none"
+    echo "   ⚠ Scripts contenant des secrets probablement en dur : $n_hard"
+
+    section 1 "✗ SCRIPTS UTILISANT UN IDENTIFIANT / MOT DE PASSE – À MIGRER" "$n_basic"
+    section 2 "◐ SCRIPTS MIXTES – partie encore en identifiant / mot de passe" "$n_mixed"
+    section 3 "? SCRIPTS À VÉRIFIER MANUELLEMENT" "$n_check"
+    section 4 "✓ SCRIPTS UTILISANT UN CLIENT D'API" "$n_api"
+    section 5 "– SCRIPTS SANS APPEL À L'API JAMF DÉTECTÉ" "$n_none"
+
+    echo ""
+    echo "==============================================================================="
+    echo " NOTES"
+    echo "  • « Identifiant/mot de passe » regroupe le Basic Auth direct (curl -u, en-tête"
+    echo "    Authorization: Basic) et l'obtention d'un token Bearer via /api/v1/auth/token,"
+    echo "    qui repose lui aussi sur un compte utilisateur Jamf Pro."
+    echo "  • La méthode cible est le client d'API : POST /api/oauth/token avec"
+    echo "    client_id, client_secret et grant_type=client_credentials."
+    echo "  • La détection est heuristique : vérifiez les scripts « À vérifier » et « Mixte »."
+    echo "  • Les valeurs sensibles sont masquées (****) dans les extraits."
+    echo "==============================================================================="
+} > "$REPORT_TXT"
+
+echo ""
+echo "Scripts analysés : $n_total  |  Identifiant/mdp : $n_basic  |  Mixtes : $n_mixed  |  À vérifier : $n_check  |  Client d'API : $n_api  |  Sans API : $n_none"
+[ "$n_hard" -gt 0 ] && echo "⚠ $n_hard script(s) semblent contenir des secrets écrits en dur."
+echo ""
+echo "Rapport texte : $REPORT_TXT"
+echo "Rapport CSV   : $REPORT_CSV"
